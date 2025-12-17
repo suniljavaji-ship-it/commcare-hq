@@ -1,0 +1,182 @@
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
+import numpy as np
+
+# FULL CLEANING PIPELINE (returns df AND monthly)
+def clean_sales_data(file_path):
+    df = pd.read_csv("online_sales_data.csv")
+    
+    # 1. Fix data types
+    df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'], format='%d-%m-%Y %H:%M', errors='coerce')
+    numeric_cols = ['Quantity', 'UnitPrice', 'CustomerID', 'Discount', 'ShippingCost']
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    product_to_cat = {
+        "White Mug": "Home & Kitchen", "Headphones": "Electronics", "Desk Lamp": "Furniture",
+        "USB Cable": "Electronics", "Office Chair": "Furniture", "Notebook": "Stationery",
+        "Wireless Mouse": "Electronics", "Blue Pen": "Stationery", "Wall Clock": "Home Decor",
+        "T-shirt": "Apparel", "Backpack": "Accessories", "Smartphone": "Electronics",
+        "Water Bottle": "Accessories", "Sunglasses": "Accessories", "Coffee Maker": "Home & Kitchen"
+    }
+    
+    # 2. Remove invalid records
+    df = df.dropna(subset=['InvoiceNo', 'StockCode', 'Quantity', 'UnitPrice'])
+    df = df[df['Quantity'] > 0]
+    df = df[(df['UnitPrice'] > 0) & (df['UnitPrice'] <= 200)]
+    df = df[df['Discount'] <= 1]
+    
+    # 3. Standardize text
+    df['PaymentMethod'] = df['PaymentMethod'].str.strip().str.title()
+    
+    # 4. Business calculations
+    df['Stock'] = df['StockCode'].str.split('_').str[-1]
+    df['Revenue'] = df['UnitPrice'] * (1 - df['Discount']) * df['Quantity']
+    df['NetProfit'] = df['Revenue'] - df['ShippingCost']
+    df["Category"] = df["Description"].map(product_to_cat).fillna("Other")
+    df['TotalSales'] = df['Quantity'] * df['UnitPrice']
+    df['NetSales'] = df['TotalSales'] * (1 - df['Discount'])
+    df['DiscountAmount'] = df['TotalSales'] * df['Discount']
+    df['TotalPrice'] = df['NetSales'] + df['ShippingCost']  # Fixed calculation
+    
+    # Extract Year/Month
+    df["Year"] = pd.to_datetime(df["InvoiceDate"]).dt.year
+    df["Month"] = pd.to_datetime(df["InvoiceDate"]).dt.month
+    
+    # Create monthly summary (RETURN THIS TOO)
+    monthly = (df.groupby(["Year", "Month"])["TotalPrice"]
+               .sum()
+               .reset_index()
+               .sort_values(["Year", "Month"]))
+    
+    # Additional calculations
+    df['CustomerSegment'] = pd.qcut(df['TotalSales'], q=4, labels=['Bronze', 'Silver', 'Gold', 'Platinum'])
+    df['Margin'] = ((df['NetSales'] - df['ShippingCost']) / df['NetSales'] * 100).round(1)
+    df['DaysSince'] = (pd.Timestamp.now() - df['InvoiceDate']).dt.days
+    df['LossFlag'] = df['NetProfit'].apply(lambda x: 'YES' if x < 0 else 'NO')
+    
+    # Round numerics
+    for col in ['TotalSales', 'NetSales', 'DiscountAmount', 'TotalPrice', 'Revenue', 'NetProfit']:
+        df[col] = df[col].round(1)
+    
+    return df, monthly  # Return both!
+
+# Execute cleaning (use clean df and monthly)
+df, monthly = clean_sales_data('online_sales_data.csv')
+df.to_csv('online_sales_clean.csv', index=False)
+print(f"✅ Cleaning complete! {df.shape[0]} rows retained.")
+
+# ALL PLOTS using clean df and monthly
+plt.style.use('default')
+
+######### COUNTPLOT
+plt.figure(figsize=(7,4))
+sns.countplot(data=df, x="OrderPriority")
+plt.title("Count of Orders by OrderPriority")
+plt.xticks(rotation=30)
+plt.show()
+
+######### SCATTER
+plt.figure(figsize=(8, 4))
+sns.scatterplot(data=df, x="UnitPrice", y="Quantity", hue="Category")
+plt.title("Quantity vs UnitPrice by Category")
+plt.show()
+
+######### BAR PLOT
+qty_by_cat = df.groupby("Category")["Quantity"].sum().reset_index()
+plt.figure(figsize=(8,4))
+sns.barplot(data=qty_by_cat, x="Category", y="Quantity")
+plt.title("Total Quantity by Category")
+plt.xticks(rotation=30)
+plt.show()
+
+######### LINE PLOT (NOW WORKS!)
+plt.figure(figsize=(9,4))
+sns.lineplot(data=monthly, x="Month", y="TotalPrice", hue="Year", marker="o")
+plt.title("Monthly Revenue by Year")
+plt.xlabel("Month")
+plt.ylabel("TotalPrice")
+plt.show()
+
+######### BOX PLOTS
+plt.figure(figsize=(6, 4))
+sns.boxplot(data=df, x="OrderPriority", y="TotalPrice")
+plt.title("TotalPrice Distribution by Order Priority")
+plt.show()
+
+plt.figure(figsize=(8, 4))
+sns.boxplot(data=df, x='Category', y='Quantity')
+plt.title('Quantity Distribution by Category')
+plt.show()
+
+######### HISTOGRAMS
+plt.figure(figsize=(10, 4))
+sns.histplot(data=df, x="UnitPrice", hue="Category", bins=20, multiple="stack")
+plt.title("Unit Price Distribution by Category")
+plt.show()
+
+plt.figure(figsize=(8, 4))
+sns.histplot(data=df[df['Quantity'] > 0], x='Quantity', bins=20, kde=True)
+plt.title('Distribution of Quantity')
+plt.show()
+
+######### KDE PLOTS
+plt.figure(figsize=(8, 4))
+sns.kdeplot(data=df, x="UnitPrice", fill=True)
+plt.title("KDE of Unit Price")
+plt.show()
+
+plt.figure(figsize=(8, 4))
+sns.kdeplot(data=df[df['Quantity'] > 0], x="Quantity", fill=True)
+plt.title("Quantity Distribution (KDE)")
+plt.show()
+
+######### VIOLIN PLOTS
+plt.figure(figsize=(8, 4))
+sns.violinplot(data=df, x="Category", y="Quantity", inner="quartile")
+plt.title('Quantity Distribution by Category (Violin Plot)')
+plt.xticks(rotation=45)
+plt.show()
+
+plt.figure(figsize=(6, 4))
+sns.violinplot(data=df, x="OrderPriority", y="TotalPrice")  # Changed FinalPrice -> TotalPrice
+plt.title("TotalPrice Distribution by Order Priority")
+plt.show()
+
+######### SWARM PLOTS
+plt.figure(figsize=(8, 4))
+sns.swarmplot(data=df, x="Category", y="Quantity", size=2)
+plt.title("Quantity per Order by Category (Swarm Plot)")
+plt.xticks(rotation=45)
+plt.show()
+
+plt.figure(figsize=(6, 4))
+sns.swarmplot(data=df, x="OrderPriority", y="TotalPrice", size=3)  # Fixed column
+plt.title("TotalPrice per Order by Priority")
+plt.show()
+
+######### PIE CHARTS
+country_counts = df['Country'].value_counts().head(10)
+plt.figure(figsize=(8, 8))
+colors = sns.color_palette('pastel', len(country_counts))
+plt.pie(country_counts.values, labels=country_counts.index, colors=colors, autopct='%.1f%%')
+plt.title('Sales Distribution by Country (Top 10)')
+plt.show()
+
+payment_counts = df['PaymentMethod'].value_counts()
+plt.figure(figsize=(8, 8))
+colors = sns.color_palette('tab10', len(payment_counts))
+plt.pie(payment_counts.values, labels=payment_counts.index, colors=colors, autopct='%.1f%%')
+plt.title('Payment Method Distribution')
+plt.show()
+
+# Country profit pie
+country_profit = df.groupby('Country')['NetProfit'].sum().nlargest(8).round(0)
+plt.figure(figsize=(10, 8))
+colors = sns.color_palette('husl', len(country_profit))
+plt.pie(country_profit.values, labels=country_profit.index, colors=colors, autopct='%.1f%%')
+plt.title('Profit Distribution by Country (Top 8)')
+plt.show()
